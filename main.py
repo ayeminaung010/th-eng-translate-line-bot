@@ -250,4 +250,12 @@ def handle_join(event):
 
 # --- 7. Run the Flask Application (for local development) ---
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000, debug=True)
+    # Check if running in production (Render) or development
+    is_production = os.environ.get('RENDER', False)
+    
+    if is_production:
+        # Production settings
+        app.run(host="0.0.0.0", port=10000)
+    else:
+        # Development settings
+        app.run(host="0.0.0.0", port=8000, debug=True)
