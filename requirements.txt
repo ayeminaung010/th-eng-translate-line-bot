@@ -1,6 +1,6 @@
 flask==3.0.0
-line-bot-sdk==3.7.0
 python-dotenv==1.0.0
-gunicorn==21.2.0
+line-bot-sdk==3.5.0
 requests==2.31.0
-googletrans==4.0.0rc1
+python-dateutil==2.8.2
+gunicorn==21.2.0
