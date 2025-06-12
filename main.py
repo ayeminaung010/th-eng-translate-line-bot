@@ -83,6 +83,32 @@ def callback():
 
     return 'OK'
 
+def detect_language(text):
+    # Count characters in different scripts
+    english_chars = sum(1 for c in text if c.isascii() and c.isalpha())
+    thai_chars = sum(1 for c in text if '\u0E00' <= c <= '\u0E7F')  # Thai Unicode range
+    myanmar_chars = sum(1 for c in text if '\u1000' <= c <= '\u109F')  # Myanmar Unicode range
+    
+    total_chars = sum(1 for c in text if c.isalpha() or '\u0E00' <= c <= '\u0E7F' or '\u1000' <= c <= '\u109F')
+    
+    if total_chars == 0:
+        return 'en'  # Default to English if no clear script is detected
+    
+    # Calculate ratios
+    eng_ratio = english_chars / total_chars if total_chars > 0 else 0
+    thai_ratio = thai_chars / total_chars if total_chars > 0 else 0
+    myanmar_ratio = myanmar_chars / total_chars if total_chars > 0 else 0
+    
+    # Determine dominant script
+    if eng_ratio > 0.7:
+        return 'en'
+    elif thai_ratio > 0.7:
+        return 'th'
+    elif myanmar_ratio > 0.7:
+        return 'my'
+    else:
+        return 'en'  # Default to English if no clear dominant script
+
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_text_message(event):
     user_message = event.message.text
@@ -102,79 +128,67 @@ def handle_text_message(event):
         reply_text = "👋 Hello! How can I help you today?"
         logger.debug(f"Sending greeting response to user {user_id}")
     elif user_message.lower().startswith('help'):
-        reply_text = "Here's what I can do:\n1. Say 'hello' to greet me\n2. Ask for 'help' to see this menu\n3. Type any Thai text for English translation!"
+        reply_text = (
+            "Here's what I can do:\n"
+            "1. Say 'hello' to greet me\n"
+            "2. Ask for 'help' to see this menu\n"
+            "3. Type English text for Thai/Myanmar translation\n"
+            "4. Type Thai text for English/Myanmar translation\n"
+            "5. Type Myanmar text for English/Thai translation!"
+        )
         logger.debug(f"Sending help menu to user {user_id}")
     else:
         # --- Translation Logic ---
         url = "https://ai-translate.p.rapidapi.com/translate"
         
-        payload = {
-            "texts": [user_message],
-            "tl": "en",
-            "sl": "th"
-        }
+        # Detect source language
+        source_lang = detect_language(user_message)
         
-        headers = {
-            "x-rapidapi-key": RAPIDAPI_KEY,
-            "x-rapidapi-host": "ai-translate.p.rapidapi.com",
-            "Content-Type": "application/json"
-        }
-
-        try:
-            logger.debug(f"Sending translation request to {url}")
-            logger.debug(f"Headers: {headers}")
-            logger.debug(f"Payload: {payload}")
-            
-            rapidapi_response = requests.post(url, json=payload, headers=headers, timeout=10)
-            
-            logger.debug(f"Response Status Code: {rapidapi_response.status_code}")
-            logger.debug(f"Response Headers: {dict(rapidapi_response.headers)}")
-            
+        # Determine target languages based on source
+        if source_lang == 'en':
+            translations_needed = ['th', 'my']
+        elif source_lang == 'th':
+            translations_needed = ['en', 'my']
+        else:  # Myanmar
+            translations_needed = ['en', 'th']
+        
+        translated_texts = []
+        
+        for target_lang in translations_needed:
             try:
-                response_json = rapidapi_response.json()
-                logger.debug("=== Translation API Response ===")
-                logger.debug(f"Full Response Data: {json.dumps(response_json, indent=2, ensure_ascii=False)}")
-                logger.debug("=== Response Structure ===")
-                logger.debug(f"Response Keys: {list(response_json.keys())}")
-                if isinstance(response_json, dict):
-                    for key, value in response_json.items():
-                        logger.debug(f"Key: {key}, Type: {type(value)}, Value: {value}")
-                logger.debug("=== End Response Data ===")
-            except json.JSONDecodeError:
-                logger.error(f"Failed to decode JSON. Raw response: {rapidapi_response.text}")
-                logger.error("=== Raw Response Content ===")
-                logger.error(rapidapi_response.text)
-                logger.error("=== End Raw Response ===")
-                reply_text = "Sorry, there was an error processing the translation. Please try again with a shorter text."
-                raise
+                payload = {
+                    "texts": [user_message],
+                    "tl": target_lang,
+                    "sl": source_lang
+                }
+                
+                headers = {
+                    "x-rapidapi-key": RAPIDAPI_KEY,
+                    "x-rapidapi-host": "ai-translate.p.rapidapi.com",
+                    "Content-Type": "application/json"
+                }
 
-            if 'texts' in response_json and response_json['texts']:
-                translated_text = response_json['texts'][0]
-                if len(translated_text) > 2000:  # Set a reasonable limit
-                    reply_text = "⚠️ Sorry, the translated text is too long. Please try with a shorter message (less than 2000 characters)."
-                    logger.warning(f"Translation exceeded length limit for user {user_id}")
-                else:
-                    reply_text = f"{translated_text}"
-                logger.info(f"Translated for {user_id}: '{user_message}' -> '{translated_text}'")
-            else:
-                logger.error(f"No translations in response: {response_json}")
-                reply_text = "Sorry, I couldn't translate your message. Please try again."
-
-        except requests.exceptions.Timeout:
-            reply_text = "Sorry, the translation service is taking too long to respond. Please try again."
-            logger.error("Translation API timeout")
-        except requests.exceptions.HTTPError as http_err:
-            error_msg = ""
-            try:
-                error_details = http_err.response.json()
-                error_msg = error_details.get('error', {}).get('message', 'Unknown error')
-            except:
-                error_msg = str(http_err)
-            reply_text = f"Translation error: {error_msg}"
-            logger.error(f"HTTP error from translation API: {error_msg}")
-        except Exception as e:
-            reply_text = "Sorry, an error occurred during translation. Please try again."
-            logger.error(f"Translation error: {str(e)}", exc_info=True)
+                logger.debug(f"Sending translation request to {url} for {target_lang}")
+                logger.debug(f"Headers: {headers}")
+                logger.debug(f"Payload: {payload}")
+                
+                rapidapi_response = requests.post(url, json=payload, headers=headers, timeout=10)
+                
+                if rapidapi_response.status_code == 200:
+                    response_json = rapidapi_response.json()
+                    if 'texts' in response_json and response_json['texts']:
+                        translated_text = response_json['texts'][0]
+                        lang_emoji = "🇬🇧" if target_lang == 'en' else "🇹🇭" if target_lang == 'th' else "🇲🇲"
+                        translated_texts.append(f"{lang_emoji} {translated_text}")
+                        
+            except Exception as e:
+                logger.error(f"Translation error for {target_lang}: {str(e)}")
+                translated_texts.append(f"Error translating to {target_lang}")
+        
+        if translated_texts:
+            reply_text = "\n\n".join(translated_texts)
+        else:
+            reply_text = "Sorry, translation failed. Please try again."
 
     if reply_text:  # Only send if we have a reply
         try:
